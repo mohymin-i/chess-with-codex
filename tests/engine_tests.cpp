@@ -1,5 +1,6 @@
 #include "bot.h"
 #include "chess.h"
+#include "evaluation.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -44,6 +45,49 @@ void testBasicPlayAndFen() {
             "FEN updates after normal moves");
 }
 
+void testHistorySnapshots() {
+    chess::ChessGame game = chess::ChessGame::standard();
+    const std::string startFen = game.fen();
+    require(game.playAlgebraic("e4").ok, "e4 is legal for history");
+    const std::string afterE4Fen = game.fen();
+    require(game.playAlgebraic("e5").ok, "e5 is legal for history");
+    require(game.playAlgebraic("Nf3").ok, "Nf3 is legal for history");
+    const std::string liveFen = game.fen();
+
+    require(game.moveCount() == 3, "history tracks three plies");
+    require(game.lastMove().has_value(), "history exposes the latest move");
+    require(game.lastMove()->from == *chess::parseSquare("g1") &&
+            game.lastMove()->to == *chess::parseSquare("f3"),
+            "lastMove reports the latest played move");
+    require(game.boardAtPly(0).toFen() == startFen, "boardAtPly can show the start position");
+    require(game.boardAtPly(1).toFen() == afterE4Fen, "boardAtPly can show an intermediate position");
+    require(game.snapshotAtPly(0).lastMove() == std::nullopt, "initial snapshot has no last move");
+    require(game.snapshotAtPly(1).lastMove()->to == *chess::parseSquare("e4"),
+            "intermediate snapshot reports its own last move");
+    require(game.snapshotAtPly(1).fen() == afterE4Fen, "snapshotAtPly has the intermediate position");
+    require(game.snapshotAtPly(99).fen() == liveFen, "snapshotAtPly clamps past the latest move");
+    require(game.fen() == liveFen, "history snapshots do not mutate the live game");
+    require(game.moveCount() == 3, "history snapshots do not change live history length");
+}
+
+void testBoardEditingForAnalysis() {
+    chess::Board board = chess::Board::empty(chess::Color::Black);
+    board.setPieceAt(*chess::parseSquare("e1"), chess::Piece{chess::Color::White, chess::PieceType::King});
+    board.setPieceAt(*chess::parseSquare("e8"), chess::Piece{chess::Color::Black, chess::PieceType::King});
+    board.setPieceAt(*chess::parseSquare("d1"), chess::Piece{chess::Color::White, chess::PieceType::Queen});
+
+    require(board.sideToMove() == chess::Color::Black, "analysis board can set side to move");
+    require(board.pieceAt(*chess::parseSquare("d1")).type == chess::PieceType::Queen,
+            "analysis board can place pieces");
+    require(board.castlingRights() == 0, "analysis editing clears castling rights");
+
+    board.setPieceAt(*chess::parseSquare("d1"), {});
+    require(board.pieceAt(*chess::parseSquare("d1")).isEmpty(), "analysis board can remove pieces");
+
+    board.clear();
+    require(board.occupancy() == 0, "analysis board can clear all pieces");
+}
+
 void testCastling() {
     chess::ChessGame game = gameFromFen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1");
     const auto moves = game.legalMovesAlgebraic();
@@ -70,6 +114,22 @@ void testPromotion() {
     require(game.playAlgebraic("a8=Q").ok, "promotion input may omit check suffix");
     require(game.fen() == "Q3k3/8/8/8/8/8/8/4K3 b - - 0 1",
             "promotion replaces the pawn");
+}
+
+void testPlayMoveUnderpromotion() {
+    chess::ChessGame game = gameFromFen("4k3/P7/8/8/8/8/8/4K3 w - - 0 1");
+    const std::vector<chess::Move> legalMoves = game.board().generateLegalMoves();
+    auto rookPromotion = std::find_if(legalMoves.begin(), legalMoves.end(), [](const chess::Move& move) {
+        return chess::squareName(move.from) == "a7" &&
+               chess::squareName(move.to) == "a8" &&
+               move.promotion == chess::PieceType::Rook;
+    });
+
+    require(rookPromotion != legalMoves.end(), "rook underpromotion exists as a generated move");
+    const chess::MoveResult result = game.playMove(*rookPromotion);
+    require(result.ok, "playMove accepts selected underpromotion");
+    require(game.fen() == "R3k3/8/8/8/8/8/8/4K3 b - - 0 1",
+            "underpromotion replaces the pawn with the selected piece");
 }
 
 void testCheckmate() {
@@ -140,14 +200,102 @@ void testCapturedMaterial() {
             "black has not captured a pawn");
 }
 
+void testEvaluation() {
+    chess::ChessGame start = chess::ChessGame::standard();
+    require(chess::evaluateBoard(start.board(), chess::Color::White) == 0,
+            "starting position evaluates as equal");
+
+    chess::ChessGame queenUp = gameFromFen("4k3/8/8/8/8/8/8/Q3K3 w - - 0 1");
+    require(chess::evaluateBoard(queenUp.board(), chess::Color::White) > 800,
+            "white queen advantage evaluates positively for White");
+    require(chess::evaluateBoard(queenUp.board(), chess::Color::Black) < -800,
+            "white queen advantage evaluates negatively for Black");
+}
+
+void testForcedMateEvaluation() {
+    chess::ChessGame game = chess::ChessGame::standard();
+    require(game.playAlgebraic("f3").ok, "f3 plays for forced mate evaluation");
+    require(game.playAlgebraic("e5").ok, "e5 plays for forced mate evaluation");
+    require(game.playAlgebraic("g4").ok, "g4 plays for forced mate evaluation");
+
+    const chess::Evaluation evaluation = chess::evaluatePosition(game.board(), chess::Color::White, 3);
+    require(evaluation.forcedMate.has_value(), "forced mate evaluation detects Fool's Mate");
+    require(evaluation.forcedMate->winner == chess::Color::Black,
+            "forced mate evaluation reports Black as the winning side");
+    require(evaluation.forcedMate->moves == 1,
+            "forced mate evaluation reports mate in one");
+}
+
+void testFenValidation() {
+    std::string error;
+    const auto badEmptyCount = chess::Board::fromFen("rnbqkbnr/pppppppp/00000000/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &error);
+    require(!badEmptyCount.has_value(), "FEN rejects zero empty-square counts");
+
+    const auto badMoveCounters = chess::Board::fromFen("8/8/8/8/8/8/8/4K2k w - - -1 0", &error);
+    require(!badMoveCounters.has_value(), "FEN rejects invalid move counters");
+}
+
 void testJohnCheckersChoosesLegalMove() {
     chess::JohnCheckers bot;
     chess::ChessGame game = chess::ChessGame::standard();
     const std::optional<chess::Move> move = bot.chooseMove(game.board());
 
     require(bot.name() == "John Checkers", "beginner bot is named John Checkers");
+    require(!bot.description().empty(), "John Checkers has a description");
     require(move.has_value(), "John Checkers chooses a move from the starting position");
     require(game.board().isLegal(*move), "John Checkers chooses a legal move");
+}
+
+void testGregFortniteChoosesLegalMove() {
+    chess::GregFortnite bot;
+    chess::ChessGame game = chess::ChessGame::standard();
+    require(game.playAlgebraic("f3").ok, "f3 plays for legacy Greg test");
+    require(game.playAlgebraic("e5").ok, "e5 plays for legacy Greg test");
+    require(game.playAlgebraic("g4").ok, "g4 plays for legacy Greg test");
+    const std::optional<chess::Move> move = bot.chooseMove(game.board());
+
+    require(bot.name() == "Greg Fortnite", "legacy bot is named Greg Fortnite");
+    require(!bot.description().empty(), "Greg Fortnite has a description");
+    require(move.has_value(), "Greg Fortnite chooses a move from a mate-in-one position");
+    require(game.board().isLegal(*move), "Greg Fortnite chooses a legal move");
+}
+
+void testDefaultBotRoster() {
+    const auto bots = chess::createDefaultBots();
+    require(bots.size() == 10, "default bot roster contains ten bots");
+
+    const std::vector<std::string> expectedNames{
+        "John Checkers",
+        "Level 2",
+        "Level 3",
+        "Level 4",
+        "Level 5",
+        "Level 6",
+        "Level 7",
+        "Level 8",
+        "Level 9",
+        "Gary Chess",
+    };
+
+    for (std::size_t i = 0; i < expectedNames.size(); ++i) {
+        require(bots[i]->name() == expectedNames[i], "bot roster is ordered by difficulty");
+        require(!bots[i]->description().empty(), "bot roster entries have descriptions");
+    }
+
+    chess::ChessGame game = chess::ChessGame::standard();
+    require(game.playAlgebraic("f3").ok, "f3 plays for roster bot test");
+    require(game.playAlgebraic("e5").ok, "e5 plays for roster bot test");
+    require(game.playAlgebraic("g4").ok, "g4 plays for roster bot test");
+
+    const std::optional<chess::Move> levelTwoMove = bots[1]->chooseMove(game.board());
+    const std::optional<chess::Move> levelEightMove = bots[7]->chooseMove(game.board());
+    const std::optional<chess::Move> levelNineMove = bots[8]->chooseMove(game.board());
+    require(levelTwoMove.has_value(), "Level 2 chooses a move from a mate-in-one position");
+    require(levelEightMove.has_value(), "Level 8 chooses a move from a mate-in-one position");
+    require(levelNineMove.has_value(), "Level 9 chooses a move from a mate-in-one position");
+    require(game.board().isLegal(*levelTwoMove), "Level 2 chooses a legal move");
+    require(game.board().isLegal(*levelEightMove), "Level 8 chooses a legal move");
+    require(game.board().isLegal(*levelNineMove), "Level 9 chooses a legal move");
 }
 
 void testGaryChessFindsMateInOne() {
@@ -160,6 +308,7 @@ void testGaryChessFindsMateInOne() {
 
     const std::optional<chess::Move> move = bot.chooseMove(game.board());
     require(bot.name() == "Gary Chess", "strong bot is named Gary Chess");
+    require(!bot.description().empty(), "Gary Chess has a description");
     require(move.has_value(), "Gary Chess chooses a move in a mate-in-one position");
     require(game.board().isLegal(*move), "Gary Chess chooses a legal move");
     require(chess::formatAlgebraic(game.board(), *move) == "Qh4#",
@@ -171,16 +320,24 @@ void testGaryChessFindsMateInOne() {
 int main() {
     testStartingPosition();
     testBasicPlayAndFen();
+    testHistorySnapshots();
+    testBoardEditingForAnalysis();
     testCastling();
     testEnPassant();
     testPromotion();
+    testPlayMoveUnderpromotion();
     testCheckmate();
     testAmbiguousNotation();
     testMakeUnmake();
     testUnicodeBoard();
     testPlayMoveApi();
     testCapturedMaterial();
+    testEvaluation();
+    testForcedMateEvaluation();
+    testFenValidation();
     testJohnCheckersChoosesLegalMove();
+    testGregFortniteChoosesLegalMove();
+    testDefaultBotRoster();
     testGaryChessFindsMateInOne();
 
     std::cout << "All engine tests passed.\n";

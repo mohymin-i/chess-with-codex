@@ -2,9 +2,9 @@
 
 ## Goal
 
-Build a simple two-player chess engine in C++ that can validate and execute legal chess moves using 64-bit bitboards. The first milestone is a correct, fast, terminal- or API-friendly engine core that accepts algebraic chess notation as input and emits algebraic chess notation as output.
+Build a simple chess engine in C++ that can validate and execute legal chess moves using 64-bit bitboards. The first milestone is a correct, fast, terminal-, GUI-, and API-friendly engine core that accepts algebraic chess notation as input and emits algebraic chess notation as output.
 
-The design must be suitable for later expansion with chess bots, search, and evaluation. This specification covers only the initial simple bot opponent; it does not cover full position evaluation, search algorithms, opening books, or time controls.
+The design must be suitable for continued expansion with stronger chess bots, search, evaluation, and richer interfaces. This specification covers the current playable CLI and starter GUI, plus the first static evaluation implementation. It does not cover opening books, time controls, UCI/XBoard protocols, or PGN database management.
 
 The current executable provides a command-line two-player game loop on top of the engine core. The CLI is intentionally thin: rule validation, move execution, notation, and game status remain in the reusable engine layer.
 
@@ -20,7 +20,10 @@ The initial engine must support:
 - Check, checkmate, stalemate, draw-state detection where required for legal play.
 - A command-line two-player interface.
 - A command-line bot opponent mode.
+- A starter graphical interface for game setup and play.
+- Optional saved-game move logs.
 - Optional Unicode board printing in the terminal.
+- Optional position evaluation display.
 - Resignation from either player.
 - All standard move types:
   - Quiet moves.
@@ -34,11 +37,8 @@ The initial engine does not need to support:
 - Chess variants.
 - Chess960 castling rules.
 - Engine-vs-engine play.
-- Position evaluation.
-- Search.
 - UCI/XBoard protocols.
 - PGN database management.
-- Graphical UI.
 
 ## Language and Performance Requirements
 
@@ -56,6 +56,7 @@ The repository should build these targets:
 - `chess_bots`: reusable bot library.
 - `chess`: command-line game executable.
 - `chess_tests`: focused engine test executable.
+- `chess_gui`: native starter GUI target on macOS that outputs `Chess.app`.
 
 ## Board Representation
 
@@ -157,10 +158,15 @@ Startup behavior:
 - Start from the standard chess position.
 - Print a game-mode menu before the game starts.
 - Offer two-player mode and bot mode.
+- Default the game-mode selection to bot mode where the UI supports a default.
 - In bot mode, show a bot selection screen before the game starts.
+- Default the bot selection to `John Checkers` where the UI supports a default.
+- Ask whether the player wants to save the game after the player colors are known.
+- Ask whether the player wants to show evaluation during the game.
 - Print a short prompt explaining accepted SAN examples after mode selection.
 - Print the available commands after mode selection.
 - If the `--printBoard` flag is present, print the current board before the first prompt.
+- If evaluation is enabled, print an initial evaluation for the current position, then a second evaluation shortly after, then a final evaluation a while after that as long as no move has been made.
 
 Supported launch forms:
 
@@ -177,7 +183,17 @@ Required startup menu:
 Required bot selection menu:
 
 - `1. John Checkers`
-- `2. Gary Chess`
+- `2. Level 2`
+- `3. Level 3`
+- `4. Level 4`
+- `5. Level 5`
+- `6. Level 6`
+- `7. Level 7`
+- `8. Level 8`
+- `9. Level 9`
+- `10. Gary Chess`
+
+The bot selection UI should show a short description for each bot, including the implementation approach.
 
 For bot mode:
 
@@ -226,6 +242,31 @@ Command handling requirements:
 - After any move that ends the game, the CLI must print a game-over message and quit immediately.
 - After resignation, the CLI must print a game-over message and quit immediately.
 
+### Saved Games
+
+The CLI must ask whether to save each game regardless of whether the game mode is two-player or bot play.
+
+If saving is enabled:
+
+- Create the `saved-games` folder if it does not already exist.
+- Create a timestamped `.txt` file in that folder.
+- Write the player assignment at the top of the file:
+  - `White: <player>`
+  - `Black: <player>`
+- Write moves below that header in standard algebraic notation.
+- Write one full move per line, for example:
+
+```text
+White: Human
+Black: Gary Chess
+
+Moves:
+1. e4 e5
+2. Nf3 Nc6
+```
+
+The save file should be updated after each successfully played move so quits, resignations, checkmates, and draws preserve the moves that were already played. The engine core must not depend on filesystem behavior; saved-game writing belongs in the CLI layer or another outer application layer.
+
 ### Board Rendering
 
 The engine should expose board rendering helpers independent of the CLI.
@@ -243,6 +284,84 @@ The Unicode board must:
 - Use visible square separators with characters such as `+`, `-`, and `|`.
 - Include file and rank labels.
 - Not depend on terminal color support.
+
+## Evaluation
+
+The project must provide a reusable static evaluation module that depends on the engine core and not on any UI layer.
+
+Required evaluation behavior:
+
+- Return centipawn values from a caller-provided perspective.
+- Positive values favor the perspective side.
+- Negative values favor the opposing side.
+- Use standard chess conventions when displaying the value: `+0.34`, `-1.20`, or `0.00`, where `1.00` is one pawn.
+- When a forced mate is found in the active search horizon, display `Mate in <N>` instead of a centipawn score.
+- Report the shortest mate the winning side can force against best defense within that horizon.
+- Show mate-like terminal results as mate-style values where practical.
+- Treat drawn terminal positions as equal.
+
+The initial static evaluator should include:
+
+- Material values.
+- Light positional terms for development, center control, king safety, open files, passed pawns, bishop pair, and endgame king activity.
+- A bounded forced-mate search that can be deepened by the UI over successive evaluation updates.
+
+CLI evaluation requirements:
+
+- Evaluation is enabled or disabled during startup.
+- In bot games, evaluate from the human player's perspective.
+- In two-player games, evaluate from White's perspective.
+- For each position, print exactly three scheduled evaluations when enabled:
+  - `Initial` immediately.
+  - `Second` shortly after.
+  - `Final` a while after that.
+- Later scheduled evaluations may search for longer forced mates than the immediate evaluation.
+- If a move is made before the second or final print, cancel the pending prints and restart the schedule from the new position.
+
+GUI evaluation requirements:
+
+- Game setup must include a `Show evaluation` option.
+- The game screen must include an evaluation label, animated horizontal bar, numeric value, and `Hide Evaluation` / `Show Evaluation` toggle.
+- The player's perspective color must be shown on the right side of the bar and the enemy color on the left.
+- If a forced mate is found, the whole bar must become the winning side's color with no opposing-color segment visible.
+- In bot games, evaluate from the human player's perspective.
+- In two-player games, evaluate from White's perspective.
+- When visible, the evaluation must update immediately after each move and then periodically for about 20 seconds.
+- When a new move is made, any pending evaluation loop must be cancelled and restarted from the new board.
+- When hidden, no evaluations should run.
+
+## Graphical Interface
+
+The first GUI milestone is intentionally shallow and should not replace the CLI yet.
+
+On macOS, the project should build a native `chess_gui` app target. The starter GUI must:
+
+- Show a game setup screen when launched.
+- Let the player choose two-player mode or bot mode.
+- In bot mode, let the player choose a bot and the human color.
+- Let the player choose whether to save the game.
+- Let the player choose whether to show evaluation.
+- Provide a settings page from the setup screen.
+- The first settings page may expose non-functional placeholders for board appearance, piece appearance, theme, visual cues, autopromote, and default promotion piece.
+- After setup, switch into a game screen with the current chess position.
+- Render pieces from engine state using Unicode chess symbols.
+- Move pieces by selecting a piece and then selecting a legal destination square.
+- Highlight legal destinations for the selected piece with small translucent dots.
+- Highlight the checked king's square in red.
+- When a human pawn promotes, show an inline in-window promotion choice for Queen, Rook, Bishop, and Knight.
+- Do not use modal dialogs, floating popup menus, or alert popups during gameplay; surface warnings and outcomes through in-window status/message text.
+- Invalid human moves should display an in-window illegal-move message.
+- In bot mode, move the selected bot's pieces after legal human moves.
+- If evaluation is enabled, show the animated evaluation bar and value.
+- Let the player hide and show evaluation during play.
+- Provide a `Flip Board` button that swaps between White-at-bottom and Black-at-bottom orientation.
+- In bot games, default the board to the human player's perspective, so human Black starts with Black at the bottom.
+- In two-player games, enable `Auto-flip` by default so the side to move is shown at the bottom after each turn.
+- Provide an `Auto-flip` option that disables turn-by-turn board flipping when unchecked.
+- Place `Resign` and `Return to Main Menu` buttons to the right of the board.
+- Only show the in-window `Quit` button on the main setup menu.
+
+The starter GUI does not need to support previous-move highlighting or saved-game writing yet. Saved-game writing remains owned by the CLI until GUI persistence is wired into the existing game orchestration.
 
 ## Legal Move Generation
 
@@ -360,9 +479,23 @@ public:
     virtual ~ChessBot() = default;
 
     virtual std::string_view name() const = 0;
+    virtual std::string_view description() const = 0;
     virtual std::optional<Move> chooseMove(const Board& board) const = 0;
 };
 ```
+
+The default bot roster must contain ten bots ordered from weakest to strongest:
+
+1. `John Checkers`
+2. `Level 2`
+3. `Level 3`
+4. `Level 4`
+5. `Level 5`
+6. `Level 6`
+7. `Level 7`
+8. `Level 8`
+9. `Level 9`
+10. `Gary Chess`
 
 The initial easy bot should be named `John Checkers`.
 
@@ -375,7 +508,16 @@ The initial easy bot should be named `John Checkers`.
 - Prefer captures, promotions, checks, castling, and central moves using a simple heuristic.
 - Avoid depending on search, static evaluation, opening books, or time controls.
 
-The first difficult bot should be named `Gary Chess`.
+The numbered bots from level 2 through level 9 should use increasing tactical awareness, search depth, and move budget. They must be named exactly `Level 2`, `Level 3`, `Level 4`, `Level 5`, `Level 6`, `Level 7`, `Level 8`, and `Level 9`.
+
+Difficulty targets are approximate because the project does not yet run rated engine matches:
+
+- `Level 5` should target roughly 1300 Elo.
+- `Level 7` should target roughly 2300 Elo.
+- `Level 8` should target elite-human strength and should only be beatable by the best humans.
+- `Level 9` should be extremely strong and effectively impossible for normal human play.
+
+The strongest bot should be named `Gary Chess`.
 
 `Gary Chess` requirements:
 
@@ -386,8 +528,23 @@ The first difficult bot should be named `Gary Chess`.
 - Prefer forced mate when available.
 - Use a static evaluation with material and positional terms.
 - Use move ordering so forcing moves are searched early.
+- Search deeper than the other bots when time permits.
+- If a completed early search shows one move is conclusively stronger than the alternatives, stop early and play it.
 - Respect a hard move budget of less than 10 seconds.
 - It is acceptable for Gary Chess to take longer than John Checkers.
+
+The level 9 bot should be named `Level 9`.
+
+`Level 9` requirements:
+
+- Always choose from the current legal move list.
+- Return no move when no legal moves exist.
+- Be deterministic for repeatable tests.
+- Be stronger than `Level 8` but weaker than `Gary Chess`.
+- Use iterative-deepening alpha-beta with quiescence and a shorter search budget than Gary Chess.
+- If a completed early search shows one move is conclusively stronger than the alternatives, stop early and play it.
+
+`Greg Fortnite` may remain as a legacy/internal bot implementation, but it is no longer part of the default ten-bot ladder.
 
 The bot layer should depend on the engine, but the engine core should not depend on bots.
 
@@ -469,6 +626,7 @@ The implementation should include tests for:
 - Make/unmake round trips.
 - FEN import/export.
 - Captured material tracking.
+- Static evaluation.
 - Unicode board rendering.
 - Bot move selection from legal moves.
 - CLI smoke behavior for illegal moves, board printing, resignation, and game-over exit where practical.
@@ -519,8 +677,7 @@ The initial architecture should leave room for:
 
 - Stronger bot players.
 - Additional bot personalities and strengths.
-- Static evaluation.
-- Search.
+- Deeper evaluation/search features.
 - Transposition tables.
 - Zobrist hashing.
 - Move ordering.
@@ -529,7 +686,7 @@ The initial architecture should leave room for:
 - Time controls.
 - Opening books.
 
-These features should not be implemented as part of the initial two-player spec, but the board representation, move encoding, and make/unmake flow should not block them.
+The board representation, move encoding, evaluation boundary, and make/unmake flow should not block these later features.
 
 ## First Milestone Acceptance Criteria
 
@@ -550,13 +707,21 @@ The first implementation is complete when:
 - The CLI presents a game-mode menu on startup.
 - The CLI presents a bot selection menu when bot mode is selected.
 - The CLI lets the human choose White or Black after selecting a bot.
+- The bot roster contains ten ordered difficulty levels.
 - `John Checkers` can play legal moves against the human.
+- `Level 2` through `Level 9` can play legal moves against the human.
 - `Gary Chess` can play legal moves against the human and should move within 10 seconds.
 - `--printBoard` prints the Unicode board in addition to normal move/status output.
 - `print` and `p` print the board during play.
 - `print toggle` toggles automatic board printing during play and confirms the new state.
 - `material` displays captured pieces and point totals.
 - `material toggle` toggles a board sidebar that shows captured material to the right of the board.
+- Startup can enable evaluation.
+- CLI evaluation prints initial, second, and final values for a position, and cancels pending values after a move.
+- GUI evaluation can be shown or hidden, updates after each move, and stops while hidden.
+- The GUI app bundle is named `Chess.app` and uses the project icon.
+- The CLI executable keeps the name `chess` and uses the project icon where the platform supports file icons.
+- The GUI supports manual board flipping and two-player auto-flip.
 - Illegal moves produce an explicit warning.
 - Resignation ends the game and declares the opponent the winner.
 - Checkmate and draw outcomes print a game-over message and quit.
