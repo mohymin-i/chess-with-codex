@@ -3,6 +3,7 @@
 #include "evaluation.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -26,6 +27,39 @@ chess::ChessGame gameFromFen(const std::string& fen) {
     auto game = chess::ChessGame::fromFen(fen, &error);
     require(game.has_value(), "FEN should parse: " + error);
     return *game;
+}
+
+std::uint64_t perft(chess::Board& board, int depth) {
+    if (depth == 0) {
+        return 1;
+    }
+
+    const std::vector<chess::Move> moves = board.generateLegalMoves();
+    if (depth == 1) {
+        return moves.size();
+    }
+
+    std::uint64_t nodes = 0;
+    for (const chess::Move& move : moves) {
+        const chess::UndoState undo = board.makeMove(move);
+        nodes += perft(board, depth - 1);
+        board.unmakeMove(move, undo);
+    }
+    return nodes;
+}
+
+void requirePerft(const std::string& label,
+                  const chess::Board& root,
+                  int depth,
+                  std::uint64_t expectedNodes) {
+    chess::Board board = root;
+    const std::string before = board.toFen();
+    const std::uint64_t actualNodes = perft(board, depth);
+
+    require(actualNodes == expectedNodes,
+            label + " perft(" + std::to_string(depth) + ") expected " +
+                std::to_string(expectedNodes) + " nodes, got " + std::to_string(actualNodes));
+    require(board.toFen() == before, label + " perft leaves the board unchanged");
 }
 
 void testStartingPosition() {
@@ -164,6 +198,18 @@ void testMakeUnmake() {
     require(board.toFen() == before, "make/unmake restores exact FEN");
 }
 
+void testPerftPositions() {
+    requirePerft("starting position", chess::Board::standard(), 1, 20);
+    requirePerft("starting position", chess::Board::standard(), 2, 400);
+    requirePerft("starting position", chess::Board::standard(), 3, 8902);
+
+    const chess::ChessGame kiwipete =
+        gameFromFen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
+    requirePerft("kiwipete", kiwipete.board(), 1, 48);
+    requirePerft("kiwipete", kiwipete.board(), 2, 2039);
+    requirePerft("kiwipete", kiwipete.board(), 3, 97862);
+}
+
 void testUnicodeBoard() {
     chess::ChessGame game = chess::ChessGame::standard();
     const std::string board = game.unicodeBoard();
@@ -246,23 +292,25 @@ void testJohnCheckersChoosesLegalMove() {
     require(game.board().isLegal(*move), "John Checkers chooses a legal move");
 }
 
-void testGregFortniteChoosesLegalMove() {
-    chess::GregFortnite bot;
+void requireBotFindsFoolsMate(chess::ChessBot& bot, const std::string& expectedName) {
     chess::ChessGame game = chess::ChessGame::standard();
-    require(game.playAlgebraic("f3").ok, "f3 plays for legacy Greg test");
-    require(game.playAlgebraic("e5").ok, "e5 plays for legacy Greg test");
-    require(game.playAlgebraic("g4").ok, "g4 plays for legacy Greg test");
-    const std::optional<chess::Move> move = bot.chooseMove(game.board());
 
-    require(bot.name() == "Greg Fortnite", "legacy bot is named Greg Fortnite");
-    require(!bot.description().empty(), "Greg Fortnite has a description");
-    require(move.has_value(), "Greg Fortnite chooses a move from a mate-in-one position");
-    require(game.board().isLegal(*move), "Greg Fortnite chooses a legal move");
+    require(game.playAlgebraic("f3").ok, "f3 plays for " + expectedName + " test");
+    require(game.playAlgebraic("e5").ok, "e5 plays for " + expectedName + " test");
+    require(game.playAlgebraic("g4").ok, "g4 plays for " + expectedName + " test");
+
+    const std::optional<chess::Move> move = bot.chooseMove(game.board());
+    require(bot.name() == expectedName, expectedName + " reports its expected name");
+    require(!bot.description().empty(), expectedName + " has a description");
+    require(move.has_value(), expectedName + " chooses a move in a mate-in-one position");
+    require(game.board().isLegal(*move), expectedName + " chooses a legal move");
+    require(chess::formatAlgebraic(game.board(), *move) == "Qh4#",
+            expectedName + " finds Fool's Mate");
 }
 
 void testDefaultBotRoster() {
     const auto bots = chess::createDefaultBots();
-    require(bots.size() == 10, "default bot roster contains ten bots");
+    require(bots.size() == 11, "default bot roster contains eleven bots");
 
     const std::vector<std::string> expectedNames{
         "John Checkers",
@@ -274,6 +322,7 @@ void testDefaultBotRoster() {
         "Level 7",
         "Level 8",
         "Level 9",
+        "Gary Chess Jr",
         "Gary Chess",
     };
 
@@ -290,29 +339,25 @@ void testDefaultBotRoster() {
     const std::optional<chess::Move> levelTwoMove = bots[1]->chooseMove(game.board());
     const std::optional<chess::Move> levelEightMove = bots[7]->chooseMove(game.board());
     const std::optional<chess::Move> levelNineMove = bots[8]->chooseMove(game.board());
+    const std::optional<chess::Move> garyJrMove = bots[9]->chooseMove(game.board());
     require(levelTwoMove.has_value(), "Level 2 chooses a move from a mate-in-one position");
     require(levelEightMove.has_value(), "Level 8 chooses a move from a mate-in-one position");
     require(levelNineMove.has_value(), "Level 9 chooses a move from a mate-in-one position");
+    require(garyJrMove.has_value(), "Gary Chess Jr chooses a move from a mate-in-one position");
     require(game.board().isLegal(*levelTwoMove), "Level 2 chooses a legal move");
     require(game.board().isLegal(*levelEightMove), "Level 8 chooses a legal move");
     require(game.board().isLegal(*levelNineMove), "Level 9 chooses a legal move");
+    require(game.board().isLegal(*garyJrMove), "Gary Chess Jr chooses a legal move");
 }
 
 void testGaryChessFindsMateInOne() {
     chess::GaryChess bot;
-    chess::ChessGame game = chess::ChessGame::standard();
+    requireBotFindsFoolsMate(bot, "Gary Chess");
+}
 
-    require(game.playAlgebraic("f3").ok, "f3 plays for Gary test");
-    require(game.playAlgebraic("e5").ok, "e5 plays for Gary test");
-    require(game.playAlgebraic("g4").ok, "g4 plays for Gary test");
-
-    const std::optional<chess::Move> move = bot.chooseMove(game.board());
-    require(bot.name() == "Gary Chess", "strong bot is named Gary Chess");
-    require(!bot.description().empty(), "Gary Chess has a description");
-    require(move.has_value(), "Gary Chess chooses a move in a mate-in-one position");
-    require(game.board().isLegal(*move), "Gary Chess chooses a legal move");
-    require(chess::formatAlgebraic(game.board(), *move) == "Qh4#",
-            "Gary Chess finds Fool's Mate");
+void testGaryChessJrFindsMateInOne() {
+    chess::GaryChessJr bot;
+    requireBotFindsFoolsMate(bot, "Gary Chess Jr");
 }
 
 } // namespace
@@ -329,6 +374,7 @@ int main() {
     testCheckmate();
     testAmbiguousNotation();
     testMakeUnmake();
+    testPerftPositions();
     testUnicodeBoard();
     testPlayMoveApi();
     testCapturedMaterial();
@@ -336,9 +382,9 @@ int main() {
     testForcedMateEvaluation();
     testFenValidation();
     testJohnCheckersChoosesLegalMove();
-    testGregFortniteChoosesLegalMove();
     testDefaultBotRoster();
     testGaryChessFindsMateInOne();
+    testGaryChessJrFindsMateInOne();
 
     std::cout << "All engine tests passed.\n";
     return 0;

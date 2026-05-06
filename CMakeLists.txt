@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.16)
 
 project(chess_with_codex LANGUAGES CXX)
 
+enable_testing()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -72,6 +74,8 @@ add_executable(chess_tests
 )
 
 target_link_libraries(chess_tests PRIVATE chess_bots)
+
+add_test(NAME engine COMMAND chess_tests)
 
 if(APPLE)
     enable_language(OBJCXX)

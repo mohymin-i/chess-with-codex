@@ -1,6 +1,9 @@
 build/
 cmake-build-*/
 .DS_Store
+.idea/
+.vscode/
+*.log
 resume.sh
 saved-games/*.txt
 !saved-games/.gitkeep

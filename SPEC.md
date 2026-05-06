@@ -191,7 +191,8 @@ Required bot selection menu:
 - `7. Level 7`
 - `8. Level 8`
 - `9. Level 9`
-- `10. Gary Chess`
+- `10. Gary Chess Jr`
+- `11. Gary Chess`
 
 The bot selection UI should show a short description for each bot, including the implementation approach.
 
@@ -342,21 +343,27 @@ On macOS, the project should build a native `chess_gui` app target. The starter 
 - Let the player choose whether to save the game.
 - Let the player choose whether to show evaluation.
 - Provide a settings page from the setup screen.
-- The first settings page may expose non-functional placeholders for board appearance, piece appearance, theme, visual cues, autopromote, and default promotion piece.
+- The settings page should expose functional board appearance, piece appearance,
+  theme, autopromote, and default promotion-piece preferences.
 - After setup, switch into a game screen with the current chess position.
 - Render pieces from engine state using Unicode chess symbols.
 - Move pieces by selecting a piece and then selecting a legal destination square.
 - Highlight legal destinations for the selected piece with small translucent dots.
 - Highlight the checked king's square in red.
-- When a human pawn promotes, show an inline in-window promotion choice for Queen, Rook, Bishop, and Knight.
-- Do not use modal dialogs, floating popup menus, or alert popups during gameplay; surface warnings and outcomes through in-window status/message text.
+- When a human pawn promotes, show an inline in-window promotion choice for
+  Queen, Rook, Bishop, and Knight.
+- Do not use modal dialogs, floating popup menus, or alert popups during
+  gameplay; surface warnings and outcomes through in-window status/message text.
 - Invalid human moves should display an in-window illegal-move message.
 - In bot mode, move the selected bot's pieces after legal human moves.
 - If evaluation is enabled, show the animated evaluation bar and value.
 - Let the player hide and show evaluation during play.
-- Provide a `Flip Board` button that swaps between White-at-bottom and Black-at-bottom orientation.
-- In bot games, default the board to the human player's perspective, so human Black starts with Black at the bottom.
-- In two-player games, enable `Auto-flip` by default so the side to move is shown at the bottom after each turn.
+- Provide a `Flip Board` button that swaps between White-at-bottom and
+  Black-at-bottom orientation.
+- In bot games, default the board to the human player's perspective, so human
+  Black starts with Black at the bottom.
+- In two-player games, enable `Auto-flip` by default so the side to move is
+  shown at the bottom after each turn.
 - Provide an `Auto-flip` option that disables turn-by-turn board flipping when unchecked.
 - Place `Resign` and `Return to Main Menu` buttons to the right of the board.
 - Only show the in-window `Quit` button on the main setup menu.
@@ -484,7 +491,7 @@ public:
 };
 ```
 
-The default bot roster must contain ten bots ordered from weakest to strongest:
+The default bot roster must contain eleven bots ordered from weakest to strongest:
 
 1. `John Checkers`
 2. `Level 2`
@@ -495,7 +502,8 @@ The default bot roster must contain ten bots ordered from weakest to strongest:
 7. `Level 7`
 8. `Level 8`
 9. `Level 9`
-10. `Gary Chess`
+10. `Gary Chess Jr`
+11. `Gary Chess`
 
 The initial easy bot should be named `John Checkers`.
 
@@ -518,6 +526,16 @@ Difficulty targets are approximate because the project does not yet run rated en
 - `Level 9` should be extremely strong and effectively impossible for normal human play.
 
 The strongest bot should be named `Gary Chess`.
+
+`Gary Chess Jr` requirements:
+
+- Always choose from the current legal move list.
+- Return no move when no legal moves exist.
+- Use the same static evaluator and iterative alpha-beta search family as `Gary Chess`.
+- Prefer much faster move selection in simple positions by using a shorter time
+  cap, more aggressive early exit, root candidate pruning, late-move reductions,
+  and shallower quiescence.
+- Remain deterministic for repeatable tests.
 
 `Gary Chess` requirements:
 
@@ -543,8 +561,6 @@ The level 9 bot should be named `Level 9`.
 - Be stronger than `Level 8` but weaker than `Gary Chess`.
 - Use iterative-deepening alpha-beta with quiescence and a shorter search budget than Gary Chess.
 - If a completed early search shows one move is conclusively stronger than the alternatives, stop early and play it.
-
-`Greg Fortnite` may remain as a legacy/internal bot implementation, but it is no longer part of the default ten-bot ladder.
 
 The bot layer should depend on the engine, but the engine core should not depend on bots.
 
@@ -707,9 +723,11 @@ The first implementation is complete when:
 - The CLI presents a game-mode menu on startup.
 - The CLI presents a bot selection menu when bot mode is selected.
 - The CLI lets the human choose White or Black after selecting a bot.
-- The bot roster contains ten ordered difficulty levels.
+- The bot roster contains eleven ordered difficulty levels.
 - `John Checkers` can play legal moves against the human.
 - `Level 2` through `Level 9` can play legal moves against the human.
+- `Gary Chess Jr` can play legal moves against the human and should move much
+  faster than Gary Chess in simple positions.
 - `Gary Chess` can play legal moves against the human and should move within 10 seconds.
 - `--printBoard` prints the Unicode board in addition to normal move/status output.
 - `print` and `p` print the board during play.
